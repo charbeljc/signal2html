@@ -43,7 +43,9 @@ from .models import Thread
 from .types import is_group_call
 from .types import is_group_ctrl
 from .types import is_group_v2_data
+from .types import DisplayType
 from .versioninfo import VersionInfo
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -52,20 +54,20 @@ def check_backup(backup_dir) -> VersionInfo:
     """Check that we have the necessary files and return VersionInfo"""
     if not os.path.join(backup_dir, "database.sqlite"):
         raise DatabaseNotFound
-    if not os.path.join(backup_dir, "DatabaseVersion.sbf"):
-        raise DatabaseVersionNotFound
-    with open(os.path.join(backup_dir, "DatabaseVersion.sbf"), "r") as fp:
-        version_str = fp.read()
+    # if not os.path.join(backup_dir, "DatabaseVersion.sbf"):
+    #     raise DatabaseVersionNotFound
+    # with open(os.path.join(backup_dir, "DatabaseVersion.sbf"), "r") as fp:
+    #     version_str = fp.read()
 
-    version = version_str.split(":")[-1].strip()
-    versioninfo = VersionInfo(version)
+    # version = version_str.split(":")[-1].strip()
+    # versioninfo = VersionInfo(version)
 
-    if not versioninfo.is_tested_version():
-        logger.warn(
-            f"This database version is untested, please report errors."
-        )
-    return versioninfo
-
+    # if not versioninfo.is_tested_version():
+    #     logger.warn(
+    #         f"This database version is untested, please report errors."
+    #     )
+    # return versioninfo
+    return VersionInfo("127")  # FIXME
 
 def get_color(db, recipient_id):
     """Extract recipient color from the database"""
@@ -119,21 +121,24 @@ def get_sms_records(db, thread, addressbook):
 
 def get_attachment_filename(_id, unique_id, backup_dir, thread_dir):
     """Get the absolute path of an attachment, warn if it doesn't exist"""
-    fname = f"Attachment_{_id}_{unique_id}.bin"
-    source = os.path.abspath(os.path.join(backup_dir, fname))
-    if not os.path.exists(source):
+    base = Path(backup_dir)
+    path = None
+    fname = None
+    for ext in (".jpg", ".bin"):
+        fname = f"{unique_id}{ext}"
+        source = base / 'attachments' / fname
+
+        if source.exists():
+            path = source
+            break
+    if not path:
         logger.warn(
             f"Couldn't find attachment '{source}'. "
             "Maybe it was deleted or never downloaded?"
         )
         return None
 
-    # Copying here is a bit of a side-effect
-    target_dir = os.path.abspath(os.path.join(thread_dir, "attachments"))
-    os.makedirs(target_dir, exist_ok=True)
-    target = os.path.join(target_dir, fname)
-    shutil.copy(source, target)
-    url = "/".join([".", "attachments", fname])
+    url = "/".join(["../../", "attachments", fname])
     return url
 
 
@@ -371,6 +376,8 @@ def get_group_update_data_v2(rawbody, addressbook, mid):
 
 def get_data_from_body(_type, body, addressbook, mid):
     """Decode data in the message body and provide a structured representation."""
+    dt = DisplayType.from_state(_type)
+    logger.debug("get-data-from-body: %d (%x): %r", _type, _type, dt)
     data = None
     if is_group_call(_type):
         data = get_group_call_data(decode_body(body), addressbook, mid)
@@ -647,8 +654,19 @@ def populate_thread(
     thread.mentions = get_mentions(db, addressbook, thread._id, versioninfo)
     thread.members = get_members(db, addressbook, thread._id, versioninfo)
 
-
 def process_backup(backup_dir, output_dir):
+    try:
+        from tqdm import tqdm
+    except ImportError:
+        logger.warning("no tqdm")
+        def tqdm(iterator, **kwargs):
+            return iterator
+
+    for _ in tqdm(process_backup_iter(backup_dir, output_dir),
+                  desc="render"):
+                  pass
+
+def process_backup_iter(backup_dir, output_dir):
     """Main functionality to convert database into HTML"""
 
     logger.info(f"This is signal2html version {__version__}")
@@ -680,5 +698,6 @@ def process_backup(backup_dir, output_dir):
             db, t, addressbook, backup_dir, thread_dir, versioninfo=versioninfo
         )
         dump_thread(t, output_dir)
+        yield
 
     db.close()
