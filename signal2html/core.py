@@ -46,9 +46,11 @@ from .types import is_group_v2_data
 from .types import DisplayType
 from .versioninfo import VersionInfo
 from pathlib import Path
+from sqlalchemy.orm import Session
 
-logger = logging.getLogger(__name__)
+from signalping.utils import setup_logger
 
+logger = setup_logger(__name__)
 
 def check_backup(backup_dir) -> VersionInfo:
     """Check that we have the necessary files and return VersionInfo"""
@@ -654,7 +656,7 @@ def populate_thread(
     thread.mentions = get_mentions(db, addressbook, thread._id, versioninfo)
     thread.members = get_members(db, addressbook, thread._id, versioninfo)
 
-def process_backup(backup_dir, output_dir):
+def process_backup(session, backup_dir, output_dir):
     try:
         from tqdm import tqdm
     except ImportError:
@@ -662,30 +664,27 @@ def process_backup(backup_dir, output_dir):
         def tqdm(iterator, **kwargs):
             return iterator
 
-    for _ in tqdm(process_backup_iter(backup_dir, output_dir),
+    for _ in tqdm(process_backup_iter(session, backup_dir, output_dir),
                   desc="render"):
                   pass
 
-def process_backup_iter(backup_dir, output_dir):
+def process_backup_iter(session: Session, backup_dir, output_dir):
     """Main functionality to convert database into HTML"""
 
     logger.info(f"This is signal2html version {__version__}")
-
     # Verify backup and open database
     versioninfo = check_backup(backup_dir)
-    db_file = os.path.join(backup_dir, "database.sqlite")
-    db_conn = sqlite3.connect(db_file)
-    db = db_conn.cursor()
-
+    connection = session.bind.connect()
+    logger.debug("cursor: %r", connection)
     # Get and index all contact and group names
-    addressbook = make_addressbook(db, versioninfo)
+    addressbook = make_addressbook(connection, versioninfo)
 
     # Start by getting the Threads from the database
     recipient_id_expr = versioninfo.get_thread_recipient_id_column()
 
-    query = db.execute(f"SELECT _id, {recipient_id_expr} FROM thread")
+    query = connection.execute(f"SELECT _id, {recipient_id_expr} FROM thread")
     threads = query.fetchall()
-
+    logger.debug("fetched %d threads: %r", len(threads))
     # Combine the recipient objects and the thread info into Thread objects
     for (_id, recipient_id) in threads:
         recipient = addressbook.get_recipient_by_address(str(recipient_id))
@@ -695,9 +694,9 @@ def process_backup_iter(backup_dir, output_dir):
         t = Thread(_id=_id, recipient=recipient)
         thread_dir = t.get_thread_dir(output_dir, make_dir=False)
         populate_thread(
-            db, t, addressbook, backup_dir, thread_dir, versioninfo=versioninfo
+            connection, t, addressbook, backup_dir, thread_dir, versioninfo=versioninfo
         )
         dump_thread(t, output_dir)
         yield
 
-    db.close()
+    connection.close()

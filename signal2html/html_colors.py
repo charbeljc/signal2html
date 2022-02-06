@@ -142,7 +142,7 @@ def get_color(name):
     color = COLORMAP.get(name, None) or AVATAR_COLORS.get(name, None)
     if not color is None:
         return color
-    logger.warn(f"Unknown color: {name}, using fallback color instead.")
+    # logger.debug(f"Unknown color: {name}, using fallback color instead.")
     return AVATAR_COLORS["unknown"]
 
 
