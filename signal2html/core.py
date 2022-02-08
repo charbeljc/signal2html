@@ -52,24 +52,6 @@ from signalping.utils import setup_logger
 
 logger = setup_logger(__name__)
 
-def check_backup(backup_dir) -> VersionInfo:
-    """Check that we have the necessary files and return VersionInfo"""
-    if not os.path.join(backup_dir, "database.sqlite"):
-        raise DatabaseNotFound
-    # if not os.path.join(backup_dir, "DatabaseVersion.sbf"):
-    #     raise DatabaseVersionNotFound
-    # with open(os.path.join(backup_dir, "DatabaseVersion.sbf"), "r") as fp:
-    #     version_str = fp.read()
-
-    # version = version_str.split(":")[-1].strip()
-    # versioninfo = VersionInfo(version)
-
-    # if not versioninfo.is_tested_version():
-    #     logger.warn(
-    #         f"This database version is untested, please report errors."
-    #     )
-    # return versioninfo
-    return VersionInfo("127")  # FIXME
 
 def get_color(db, recipient_id):
     """Extract recipient color from the database"""
@@ -121,27 +103,10 @@ def get_sms_records(db, thread, addressbook):
     return sms_records
 
 
-def get_attachment_filename(_id, unique_id, backup_dir, thread_dir):
+def get_attachment_filename(_id, unique_id, media_url, thread_dir):
     """Get the absolute path of an attachment, warn if it doesn't exist"""
-    base = Path(backup_dir)
-    path = None
-    fname = None
-    for ext in (".jpg", ".bin"):
-        fname = f"{unique_id}{ext}"
-        source = base / 'attachments' / fname
 
-        if source.exists():
-            path = source
-            break
-    if not path:
-        logger.warn(
-            f"Couldn't find attachment '{source}'. "
-            "Maybe it was deleted or never downloaded?"
-        )
-        return None
-
-    url = "/".join(["../../", "attachments", fname])
-    return url
+    return f"{media_url}/attachments/{unique_id}"
 
 
 def add_mms_attachments(db, mms, backup_dir, thread_dir):
@@ -639,7 +604,7 @@ def get_members(
 
 
 def populate_thread(
-    db, thread, addressbook, backup_dir, thread_dir, versioninfo=None
+    db, thread, addressbook, media_url, thread_dir, versioninfo=None
 ):
     """Populate a thread with all corresponding messages"""
     sms_records = get_sms_records(db, thread, addressbook)
@@ -647,7 +612,7 @@ def populate_thread(
         db,
         thread,
         addressbook,
-        backup_dir,
+        media_url,
         thread_dir,
         versioninfo,
     )
@@ -656,7 +621,7 @@ def populate_thread(
     thread.mentions = get_mentions(db, addressbook, thread._id, versioninfo)
     thread.members = get_members(db, addressbook, thread._id, versioninfo)
 
-def process_backup(session, backup_dir, output_dir):
+def process_backup(session, media_url, output_dir):
     try:
         from tqdm import tqdm
     except ImportError:
@@ -664,18 +629,18 @@ def process_backup(session, backup_dir, output_dir):
         def tqdm(iterator, **kwargs):
             return iterator
 
-    for _ in tqdm(process_backup_iter(session, backup_dir, output_dir),
+    for _ in tqdm(process_backup_iter(session, media_url, output_dir),
                   desc="render"):
                   pass
 
-def process_backup_iter(session: Session, backup_dir, output_dir):
+def process_backup_iter(session: Session, media_url, output_dir):
     """Main functionality to convert database into HTML"""
 
     logger.info(f"This is signal2html version {__version__}")
     # Verify backup and open database
-    versioninfo = check_backup(backup_dir)
+    version = session.execute("PRAGMA user_version").scalar()
+    versioninfo = VersionInfo(str(version))
     connection = session.bind.connect()
-    logger.debug("cursor: %r", connection)
     # Get and index all contact and group names
     addressbook = make_addressbook(connection, versioninfo)
 
@@ -694,7 +659,7 @@ def process_backup_iter(session: Session, backup_dir, output_dir):
         t = Thread(_id=_id, recipient=recipient)
         thread_dir = t.get_thread_dir(output_dir, make_dir=False)
         populate_thread(
-            connection, t, addressbook, backup_dir, thread_dir, versioninfo=versioninfo
+            connection, t, addressbook, media_url, thread_dir, versioninfo=versioninfo
         )
         dump_thread(t, output_dir)
         yield
